@@ -1,11 +1,14 @@
 name: Sync Upstream and Deploy
 
 on:
-  schedule:
-    - cron: '0 */8 * * *'  # 每8小时检查一次
+  # 支持手动触发
   workflow_dispatch:
+  # 监听上游仓库的 webhook 事件
   repository_dispatch:
     types: [upstream_update]
+  # 保持定时同步作为备份方案
+  schedule:
+    - cron: '0 */8 * * *'  # 每8小时检查一次
 
 jobs:
   sync_and_deploy:
@@ -29,22 +32,11 @@ jobs:
       - name: Add upstream repository
         run: |
           git remote add upstream https://github.com/jaywcjlove/reference.git
-          git fetch upstream gh-pages
-      
-      - name: Check for updates
-        id: check
-        run: |
-          UPSTREAM_SHA=$(git rev-parse upstream/gh-pages)
-          CURRENT_SHA=$(git rev-parse HEAD)
-          if [ "$UPSTREAM_SHA" != "$CURRENT_SHA" ]; then
-            echo "UPDATE_NEEDED=true" >> $GITHUB_ENV
-          else
-            echo "UPDATE_NEEDED=false" >> $GITHUB_ENV
-          fi
+          git remote -v
       
       - name: Sync with upstream
-        if: env.UPDATE_NEEDED == 'true'
         run: |
+          git fetch upstream gh-pages
           git merge upstream/gh-pages --no-edit || {
             echo "Merge conflict occurred. Aborting merge..."
             git merge --abort
@@ -53,15 +45,11 @@ jobs:
           git push origin gh-pages
         
       - name: Trigger Cloudflare Pages deployment
-        if: env.UPDATE_NEEDED == 'true'
+        if: success()
         run: |
-          RESPONSE=$(curl -X POST "https://api.cloudflare.com/client/v4/pages/webhooks/deploy_hooks/a0c0031e-f2b4-4507-a6cf-1f714bcb4992")
-          echo "Deployment triggered. Response: $RESPONSE"
-
-      - name: Print sync status
+          curl -X POST "https://api.cloudflare.com/client/v4/pages/webhooks/deploy_hooks/a0c0031e-f2b4-4507-a6cf-1f714bcb4992"
+      
+      - name: Notify on failure
+        if: failure()
         run: |
-          if [ "${{ env.UPDATE_NEEDED }}" == "true" ]; then
-            echo "Updates were found and synchronized"
-          else
-            echo "Repository is already up to date with upstream"
-          fi
+          echo "Sync or deployment failed. Please check the workflow logs."
